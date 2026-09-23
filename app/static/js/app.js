@@ -33,7 +33,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const previewPlaceholder = document.getElementById('previewPlaceholder');
   const downloadBtn = document.getElementById('downloadBtn');
 
-  // Pipeline Step Items
+  // Pipeline Step Items in execution order
+  const stepKeys = ['upload', 'ocr', 'classify', 'kie', 'pii', 'redact'];
   const steps = {
     upload: document.getElementById('step-upload'),
     ocr: document.getElementById('step-ocr'),
@@ -49,15 +50,17 @@ document.addEventListener('DOMContentLoaded', () => {
   // 1. Health Status Check
   async function checkHealth() {
     try {
-      const res = await fetch('/health');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.status === 'healthy') {
-          statusBadge.className = 'status-badge online';
-          statusText.textContent = 'System Online';
-          offlineBanner.style.display = 'none';
-          return true;
-        }
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout for Render wakeups
+
+      const res = await fetch('/health', { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (res.ok || res.status === 200) {
+        statusBadge.className = 'status-badge online';
+        statusText.textContent = 'System Online';
+        offlineBanner.style.display = 'none';
+        return true;
       }
       setOfflineState();
       return false;
@@ -148,7 +151,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const isOnline = await checkHealth();
     if (!isOnline) {
-      showError('Start the FastAPI server to use PRAMAAN RAKSHAK.');
+      showError('System Offline: Please verify the server is running.');
       return;
     }
 
@@ -184,13 +187,14 @@ document.addEventListener('DOMContentLoaded', () => {
         body: JSON.stringify({ text: ocrText })
       });
       
-      let classifyData = null;
-      if (classifyRes.ok) {
-        classifyData = await classifyRes.json();
-        docTypeVal.textContent = classifyData.document_type || 'Unknown';
-        const confPct = (classifyData.confidence * 100).toFixed(1) + '%';
-        docConfVal.innerHTML = `<span>${confPct}</span>`;
+      if (!classifyRes.ok) {
+        const errData = await classifyRes.json().catch(() => ({ detail: 'Classification failed.' }));
+        throw { step: 'classify', message: errData.detail || 'Classification failed.' };
       }
+      const classifyData = await classifyRes.json();
+      docTypeVal.textContent = classifyData.document_type || 'Unknown';
+      const confPct = (classifyData.confidence * 100).toFixed(1) + '%';
+      docConfVal.innerHTML = `<span>${confPct}</span>`;
       updateStepStatus('classify', 'completed');
 
       // Step 4: KIE
@@ -199,14 +203,16 @@ document.addEventListener('DOMContentLoaded', () => {
       formDataKie.append('file', selectedFile);
 
       const kieRes = await fetch('/extract/fir', { method: 'POST', body: formDataKie });
-      if (kieRes.ok) {
-        const kieData = await kieRes.json();
-        const fields = kieData.extracted_fields || {};
-        psVal.textContent = (fields.police_station && fields.police_station.value) ? fields.police_station.value : '-';
-        yearVal.textContent = (fields.year && fields.year.value) ? fields.year.value : '-';
-        statutesVal.textContent = (fields.statutes && fields.statutes.value) ? fields.statutes.value : '-';
-        complainantVal.textContent = (fields.complainant_name && fields.complainant_name.value) ? fields.complainant_name.value : '-';
+      if (!kieRes.ok) {
+        const errData = await kieRes.json().catch(() => ({ detail: 'KIE processing failed.' }));
+        throw { step: 'kie', message: errData.detail || 'KIE processing failed.' };
       }
+      const kieData = await kieRes.json();
+      const fields = kieData.extracted_fields || {};
+      psVal.textContent = (fields.police_station && fields.police_station.value) ? fields.police_station.value : '-';
+      yearVal.textContent = (fields.year && fields.year.value) ? fields.year.value : '-';
+      statutesVal.textContent = (fields.statutes && fields.statutes.value) ? fields.statutes.value : '-';
+      complainantVal.textContent = (fields.complainant_name && fields.complainant_name.value) ? fields.complainant_name.value : '-';
       updateStepStatus('kie', 'completed');
 
       // Step 5: PII Detection
@@ -215,12 +221,13 @@ document.addEventListener('DOMContentLoaded', () => {
       formDataPii.append('file', selectedFile);
 
       const piiRes = await fetch('/detect/pii', { method: 'POST', body: formDataPii });
-      let piiEntities = [];
-      if (piiRes.ok) {
-        const piiData = await piiRes.json();
-        piiEntities = piiData.pii_entities || [];
-        renderPIITable(piiEntities);
+      if (!piiRes.ok) {
+        const errData = await piiRes.json().catch(() => ({ detail: 'PII detection failed.' }));
+        throw { step: 'pii', message: errData.detail || 'PII detection failed.' };
       }
+      const piiData = await piiRes.json();
+      const piiEntities = piiData.pii_entities || [];
+      renderPIITable(piiEntities);
       updateStepStatus('pii', 'completed');
 
       // Step 6: Redaction
@@ -241,8 +248,18 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (err) {
       const failedStep = err.step || 'process';
       const msg = err.message || 'An unexpected error occurred during processing.';
-      updateStepStatus(failedStep, 'failed');
-      showError(`Processing failed at ${failedStep.toUpperCase()} step: ${msg}`);
+      
+      // Update failed step and mark subsequent steps as failed/canceled
+      let foundFailed = false;
+      stepKeys.forEach(k => {
+        if (k === failedStep) {
+          updateStepStatus(k, 'failed');
+          foundFailed = true;
+        } else if (foundFailed) {
+          updateStepStatus(k, 'failed');
+        }
+      });
+      showError(`Document processing failed at ${failedStep.toUpperCase()} stage: ${msg}`);
     } finally {
       isProcessing = false;
       processBtn.disabled = false;
