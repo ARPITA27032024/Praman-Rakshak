@@ -47,24 +47,32 @@ document.addEventListener('DOMContentLoaded', () => {
   let selectedFile = null;
   let isProcessing = false;
 
+  // Global uncaught JS error logger for debug
+  window.addEventListener('error', (evt) => {
+    console.error('[DEBUG] Uncaught JS Error:', evt.message, 'at', evt.filename, ':', evt.lineno);
+  });
+
   // 1. Health Status Check
   async function checkHealth() {
+    console.log('[DEBUG] Requesting health status from URL: /health');
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout for Render wakeups
-
-      const res = await fetch('/health', { signal: controller.signal });
-      clearTimeout(timeoutId);
+      const res = await fetch('/health', { cache: 'no-cache' });
+      console.log('[DEBUG] Health HTTP status:', res.status, 'ok:', res.ok);
 
       if (res.ok || res.status === 200) {
+        const data = await res.json().catch(() => ({}));
+        console.log('[DEBUG] Health response body:', data);
         statusBadge.className = 'status-badge online';
         statusText.textContent = 'System Online';
         offlineBanner.style.display = 'none';
         return true;
       }
+
+      console.warn('[DEBUG] Health status check returned non-200 status:', res.status);
       setOfflineState();
       return false;
     } catch (e) {
+      console.error('[DEBUG] Health status check fetch exception:', e);
       setOfflineState();
       return false;
     }
@@ -116,6 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   function handleFileSelected(file) {
+    console.log('[DEBUG] File selected:', file.name, 'size:', file.size, 'type:', file.type);
     const validExtensions = ['.png', '.jpg', '.jpeg', '.pdf'];
     const ext = '.' + file.name.split('.').pop().toLowerCase();
     
@@ -147,13 +156,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 3. Process Document Pipeline
   processBtn.addEventListener('click', async () => {
+    console.log('[DEBUG] Process Document button clicked. Selected file:', selectedFile ? selectedFile.name : 'NONE');
     if (!selectedFile || isProcessing) return;
-
-    const isOnline = await checkHealth();
-    if (!isOnline) {
-      showError('System Offline: Please verify the server is running.');
-      return;
-    }
 
     isProcessing = true;
     processBtn.disabled = true;
@@ -163,22 +167,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       // Step 1: Uploaded
+      console.log('[DEBUG] Step 1: Upload stage marked completed.');
       updateStepStatus('upload', 'completed');
 
       // Step 2: OCR
+      console.log('[DEBUG] Step 2: Sending POST /ocr request...');
       updateStepStatus('ocr', 'processing');
       const formDataOcr = new FormData();
       formDataOcr.append('file', selectedFile);
 
       const ocrRes = await fetch('/ocr', { method: 'POST', body: formDataOcr });
+      console.log('[DEBUG] OCR HTTP status:', ocrRes.status, 'ok:', ocrRes.ok);
+
       if (!ocrRes.ok) {
         const errData = await ocrRes.json().catch(() => ({ detail: 'OCR processing failed.' }));
+        console.error('[DEBUG] OCR processing error body:', errData);
         throw { step: 'ocr', message: errData.detail || 'OCR processing failed.' };
       }
       const ocrData = await ocrRes.json();
+      console.log('[DEBUG] OCR response body received. Text length:', (ocrData.text || '').length, 'Regions:', (ocrData.regions || []).length);
       updateStepStatus('ocr', 'completed');
 
       // Step 3: Classification
+      console.log('[DEBUG] Step 3: Sending POST /classify request...');
       updateStepStatus('classify', 'processing');
       const ocrText = ocrData.text || '';
       const classifyRes = await fetch('/classify', {
@@ -186,28 +197,35 @@ document.addEventListener('DOMContentLoaded', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: ocrText })
       });
+      console.log('[DEBUG] Classify HTTP status:', classifyRes.status);
       
       if (!classifyRes.ok) {
         const errData = await classifyRes.json().catch(() => ({ detail: 'Classification failed.' }));
+        console.error('[DEBUG] Classify error body:', errData);
         throw { step: 'classify', message: errData.detail || 'Classification failed.' };
       }
       const classifyData = await classifyRes.json();
+      console.log('[DEBUG] Classify response body:', classifyData);
       docTypeVal.textContent = classifyData.document_type || 'Unknown';
       const confPct = (classifyData.confidence * 100).toFixed(1) + '%';
       docConfVal.innerHTML = `<span>${confPct}</span>`;
       updateStepStatus('classify', 'completed');
 
       // Step 4: KIE
+      console.log('[DEBUG] Step 4: Sending POST /extract/fir request...');
       updateStepStatus('kie', 'processing');
       const formDataKie = new FormData();
       formDataKie.append('file', selectedFile);
 
       const kieRes = await fetch('/extract/fir', { method: 'POST', body: formDataKie });
+      console.log('[DEBUG] KIE HTTP status:', kieRes.status);
       if (!kieRes.ok) {
         const errData = await kieRes.json().catch(() => ({ detail: 'KIE processing failed.' }));
+        console.error('[DEBUG] KIE error body:', errData);
         throw { step: 'kie', message: errData.detail || 'KIE processing failed.' };
       }
       const kieData = await kieRes.json();
+      console.log('[DEBUG] KIE response body:', kieData);
       const fields = kieData.extracted_fields || {};
       psVal.textContent = (fields.police_station && fields.police_station.value) ? fields.police_station.value : '-';
       yearVal.textContent = (fields.year && fields.year.value) ? fields.year.value : '-';
@@ -216,40 +234,48 @@ document.addEventListener('DOMContentLoaded', () => {
       updateStepStatus('kie', 'completed');
 
       // Step 5: PII Detection
+      console.log('[DEBUG] Step 5: Sending POST /detect/pii request...');
       updateStepStatus('pii', 'processing');
       const formDataPii = new FormData();
       formDataPii.append('file', selectedFile);
 
       const piiRes = await fetch('/detect/pii', { method: 'POST', body: formDataPii });
+      console.log('[DEBUG] PII HTTP status:', piiRes.status);
       if (!piiRes.ok) {
         const errData = await piiRes.json().catch(() => ({ detail: 'PII detection failed.' }));
+        console.error('[DEBUG] PII error body:', errData);
         throw { step: 'pii', message: errData.detail || 'PII detection failed.' };
       }
       const piiData = await piiRes.json();
+      console.log('[DEBUG] PII response body:', piiData);
       const piiEntities = piiData.pii_entities || [];
       renderPIITable(piiEntities);
       updateStepStatus('pii', 'completed');
 
       // Step 6: Redaction
+      console.log('[DEBUG] Step 6: Sending POST /redact/pii request...');
       updateStepStatus('redact', 'processing');
       const formDataRedact = new FormData();
       formDataRedact.append('file', selectedFile);
 
       const redactRes = await fetch('/redact/pii', { method: 'POST', body: formDataRedact });
+      console.log('[DEBUG] Redact HTTP status:', redactRes.status);
       if (!redactRes.ok) {
         const errData = await redactRes.json().catch(() => ({ detail: 'Redaction failed.' }));
+        console.error('[DEBUG] Redact error body:', errData);
         throw { step: 'redact', message: errData.detail || 'Redaction failed.' };
       }
       const redactData = await redactRes.json();
+      console.log('[DEBUG] Redact response body:', redactData);
       updateStepStatus('redact', 'completed');
 
       renderRedactionResults(redactData);
 
     } catch (err) {
+      console.error('[DEBUG] Pipeline exception encountered:', err);
       const failedStep = err.step || 'process';
       const msg = err.message || 'An unexpected error occurred during processing.';
       
-      // Update failed step and mark subsequent steps as failed/canceled
       let foundFailed = false;
       stepKeys.forEach(k => {
         if (k === failedStep) {
