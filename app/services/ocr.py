@@ -1,0 +1,163 @@
+import io
+from typing import Dict, List, Any, Optional
+from PIL import Image, ImageOps
+import numpy as np
+import pymupdf
+import paddle.inference as paddle_inference
+from paddlex import create_pipeline
+
+# Fix for Paddle 3.3+ static CPU executor issue on Windows with oneDNN PIR instructions
+_orig_create_predictor = paddle_inference.create_predictor
+
+
+def _patched_create_predictor(config):
+    if hasattr(config, "disable_mkldnn"):
+        config.disable_mkldnn()
+    if hasattr(config, "enable_new_ir"):
+        config.enable_new_ir(False)
+    return _orig_create_predictor(config)
+
+
+paddle_inference.create_predictor = _patched_create_predictor
+
+
+class OCRService:
+    """
+    OCR Service powered by pretrained PaddleOCR pipeline.
+    Extracts text regions, confidence scores, and bounding boxes [x1, y1, x2, y2]
+    from scanned document images and PDFs.
+    """
+
+    SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
+    SUPPORTED_MIME_TYPES = {"image/jpeg", "image/png", "application/pdf"}
+
+    def __init__(self):
+        self._pipeline = None
+
+    def _get_pipeline(self):
+        """Lazy initializer for the PaddleOCR pipeline."""
+        if self._pipeline is None:
+            self._pipeline = create_pipeline(pipeline="OCR")
+        return self._pipeline
+
+    def process_document(self, file_bytes: bytes, filename: str) -> Dict[str, Any]:
+        """
+        Process uploaded document bytes (Image or PDF) and extract OCR text, bounding boxes, and confidence.
+
+        Args:
+            file_bytes: Raw binary bytes of uploaded file
+            filename: Original file name (used to check extension)
+
+        Returns:
+            Dict containing 'success', 'text', and 'regions' list (with bbox, text, confidence, page).
+        """
+        extension = f".{filename.split('.')[-1].lower()}" if "." in filename else ""
+        if extension not in self.SUPPORTED_EXTENSIONS:
+            raise ValueError(
+                f"Unsupported file extension '{extension}'. "
+                f"Supported formats: {', '.join(sorted(self.SUPPORTED_EXTENSIONS))}"
+            )
+
+        if extension == ".pdf":
+            return self._process_pdf(file_bytes)
+        else:
+            return self._process_image(file_bytes)
+
+    def _process_image(self, file_bytes: bytes) -> Dict[str, Any]:
+        """Process image files (JPG, JPEG, PNG)."""
+        try:
+            image = Image.open(io.BytesIO(file_bytes))
+            image = ImageOps.exif_transpose(image).convert("RGB")
+            img_np = np.array(image)
+        except Exception as e:
+            raise ValueError(f"Invalid or corrupted image file: {str(e)}")
+
+        return self._run_ocr_on_numpy_image(img_np, page_num=1)
+
+    def _process_pdf(self, file_bytes: bytes) -> Dict[str, Any]:
+        """Process multi-page PDF documents page by page using PyMuPDF."""
+        try:
+            pdf_doc = pymupdf.open(stream=file_bytes, filetype="pdf")
+        except Exception as e:
+            raise ValueError(f"Invalid or corrupted PDF file: {str(e)}")
+
+        all_texts: List[str] = []
+        all_regions: List[Dict[str, Any]] = []
+
+        try:
+            pipeline = self._get_pipeline()
+            for page_idx, page in enumerate(pdf_doc, start=1):
+                # Render PDF page to RGB pixmap at 150 DPI
+                pix = page.get_pixmap(dpi=150)
+                img_np = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+                    (pix.height, pix.width, 3)
+                )
+
+                results = list(pipeline.predict(img_np))
+                page_texts, page_regions = self._parse_pipeline_results(results, page_num=page_idx)
+                
+                all_texts.extend(page_texts)
+                all_regions.extend(page_regions)
+        finally:
+            pdf_doc.close()
+
+        full_text = "\n".join(all_texts).strip()
+        return {
+            "success": True,
+            "text": full_text,
+            "regions": all_regions,
+        }
+
+    def _run_ocr_on_numpy_image(self, img_np: np.ndarray, page_num: int = 1) -> Dict[str, Any]:
+        """Run OCR pipeline on a single numpy RGB image array."""
+        pipeline = self._get_pipeline()
+        results = list(pipeline.predict(img_np))
+        texts, regions = self._parse_pipeline_results(results, page_num=page_num)
+
+        full_text = "\n".join(texts).strip()
+        return {
+            "success": True,
+            "text": full_text,
+            "regions": regions,
+        }
+
+    def _parse_pipeline_results(self, results: List[Any], page_num: int = 1):
+        """Extract text lines, confidence scores, and bounding boxes from PaddleOCR prediction items."""
+        texts: List[str] = []
+        regions: List[Dict[str, Any]] = []
+
+        for res in results:
+            if not isinstance(res, dict):
+                continue
+            
+            rec_texts = res.get("rec_texts", [])
+            rec_scores = res.get("rec_scores", [])
+            rec_polys = res.get("rec_polys", res.get("dt_polys", []))
+
+            for idx, (text, score) in enumerate(zip(rec_texts, rec_scores)):
+                text_clean = str(text).strip()
+                if text_clean:
+                    texts.append(text_clean)
+
+                    # Extract bounding box [x1, y1, x2, y2]
+                    bbox = [0.0, 0.0, 0.0, 0.0]
+                    if idx < len(rec_polys):
+                        poly = rec_polys[idx]
+                        poly_list = poly.tolist() if hasattr(poly, "tolist") else poly
+                        if poly_list:
+                            xs = [float(pt[0]) for pt in poly_list]
+                            ys = [float(pt[1]) for pt in poly_list]
+                            bbox = [round(min(xs), 2), round(min(ys), 2), round(max(xs), 2), round(max(ys), 2)]
+
+                    regions.append({
+                        "text": text_clean,
+                        "confidence": round(float(score), 4),
+                        "bbox": bbox,
+                        "page": page_num,
+                    })
+
+        return texts, regions
+
+
+# Singleton instance for app-wide use
+ocr_service = OCRService()

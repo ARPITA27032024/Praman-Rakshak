@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PRAMAAN RAKSHAK - Digital Evidence</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+  <!-- App Header -->
+  <header class="app-header">
+    <div class="brand-container">
+      <h1 class="brand-title">PRAMAAN RAKSHAK</h1>
+      <p class="brand-subtitle">AI-Powered Digital Evidence Document Intelligence</p>
+    </div>
+    <div class="header-right">
+      <div id="statusBadge" class="status-badge online">
+        <span id="statusText">System Online</span>
+      </div>
+      <button id="resetBtn" class="btn-secondary">New Document</button>
+    </div>
+  </header>
+
+  <!-- Offline Warning Banner -->
+  <div id="offlineBanner" class="offline-banner" style="display: none;">
+    System Offline: Start the FastAPI server to use PRAMAAN RAKSHAK.
+  </div>
+
+  <!-- Main Dashboard Container -->
+  <main class="dashboard-container">
+
+    <!-- Global Error Box -->
+    <div id="errorBox" class="error-box" style="display: none;">
+      <div id="errorMessage">An error occurred during processing.</div>
+    </div>
+
+    <!-- Primary Interaction Section (Top Row) -->
+    <section class="primary-row">
+      
+      <!-- Upload Evidence Card -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Upload Evidence</h2>
+        </div>
+        
+        <div id="dropzone" class="dropzone">
+          <div class="dropzone-text">Drag & drop document here or click to browse</div>
+          <div class="dropzone-hint">Supported formats: PNG, JPG, JPEG, PDF</div>
+          <input type="file" id="fileInput" accept=".png,.jpg,.jpeg,.pdf" style="display: none;">
+        </div>
+
+        <div id="fileInfoPill" class="file-info-pill" style="display: none;">
+          <div>
+            <div id="fileName" class="file-name">-</div>
+            <div id="fileSize" class="file-size">-</div>
+          </div>
+          <span style="color: var(--success); font-size: 0.8rem; font-weight: 600;">Selected</span>
+        </div>
+
+        <button id="processBtn" class="btn-primary" disabled>Process Document</button>
+      </div>
+
+      <!-- Processing Status Card -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Processing Status</h2>
+        </div>
+
+        <div class="pipeline-list">
+          <div id="step-upload" class="pipeline-item pending">
+            <span class="pipeline-label">Document Uploaded</span>
+            <span class="step-badge badge-pending">Pending</span>
+          </div>
+
+          <div id="step-ocr" class="pipeline-item pending">
+            <span class="pipeline-label">OCR</span>
+            <span class="step-badge badge-pending">Pending</span>
+          </div>
+
+          <div id="step-classify" class="pipeline-item pending">
+            <span class="pipeline-label">FIR Classification</span>
+            <span class="step-badge badge-pending">Pending</span>
+          </div>
+
+          <div id="step-kie" class="pipeline-item pending">
+            <span class="pipeline-label">Key Information Extraction</span>
+            <span class="step-badge badge-pending">Pending</span>
+          </div>
+
+          <div id="step-pii" class="pipeline-item pending">
+            <span class="pipeline-label">PII Detection</span>
+            <span class="step-badge badge-pending">Pending</span>
+          </div>
+
+          <div id="step-redact" class="pipeline-item pending">
+            <span class="pipeline-label">PII Redaction</span>
+            <span class="step-badge badge-pending">Pending</span>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Document Information Card (Full Width) -->
+    <section class="card full-width-card">
+      <div class="card-header">
+        <h2 class="card-title">Document Information</h2>
+      </div>
+
+      <div class="info-grid">
+        <div class="info-box">
+          <div class="info-label">Document Type</div>
+          <div id="docTypeVal" class="info-value">-</div>
+        </div>
+
+        <div class="info-box">
+          <div class="info-label">Confidence</div>
+          <div id="docConfVal" class="info-value">-</div>
+        </div>
+
+        <div class="info-box">
+          <div class="info-label">Police Station</div>
+          <div id="psVal" class="info-value">-</div>
+        </div>
+
+        <div class="info-box">
+          <div class="info-label">Year</div>
+          <div id="yearVal" class="info-value">-</div>
+        </div>
+
+        <div class="info-box">
+          <div class="info-label">Statutes</div>
+          <div id="statutesVal" class="info-value">-</div>
+        </div>
+
+        <div class="info-box">
+          <div class="info-label">Complainant</div>
+          <div id="complainantVal" class="info-value">-</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Results Grid Section (Secondary Row) -->
+    <section class="results-grid">
+      
+      <!-- PII Detection Card -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">PII Detection</h2>
+        </div>
+
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Confidence</th>
+                <th>Page</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="piiTableBody">
+              <tr id="piiEmptyRow">
+                <td colspan="4" style="text-align: center; color: var(--text-muted);">No PII detected yet</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Redaction & Download Card -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Redaction & Download</h2>
+        </div>
+
+        <div class="redaction-stats">
+          <div>
+            <div class="info-label">Redactions Applied</div>
+            <div id="redactionCountVal" class="stat-number">0</div>
+          </div>
+          <div style="text-align: right;">
+            <div class="info-label">PII Categories</div>
+            <div id="redactionTypesVal" class="info-value">-</div>
+          </div>
+        </div>
+
+        <div id="previewContainer" class="preview-container">
+          <div class="preview-placeholder">Processed document preview will appear here</div>
+        </div>
+
+        <a id="downloadBtn" class="btn-success" href="#" download style="display: none;">
+          Download Redacted Document
+        </a>
+      </div>
+
+    </section>
+
+  </main>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environment
+venv/
+.venv/
+env/
+ENV/
+
+# Environment files
+.env
+!.env.example
+
+# IDE & Editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project storage (uploaded files, redacted copies, logs)
+storage/
+data/
+logs/
+
+samples/real_fir.jpg
+
+samples/Airport PSAIRPORT-0007-2017-3336__1.jpg
