@@ -64,15 +64,41 @@ class OCRService:
             return self._process_image(file_bytes)
 
     def _process_image(self, file_bytes: bytes) -> Dict[str, Any]:
-        """Process image files (JPG, JPEG, PNG)."""
+        """Process image files (JPG, JPEG, PNG) with memory safety for cloud deployment."""
         try:
             image = Image.open(io.BytesIO(file_bytes))
             image = ImageOps.exif_transpose(image).convert("RGB")
-            img_np = np.array(image)
+            orig_w, orig_h = image.size
+            
+            # Max dimension cap for cloud memory safety (prevents 502 OOM crashes on Render 512MB RAM)
+            max_dim = 1600
+            scale = 1.0
+            if max(orig_w, orig_h) > max_dim:
+                scale = max_dim / float(max(orig_w, orig_h))
+                new_w = int(round(orig_w * scale))
+                new_h = int(round(orig_h * scale))
+                image_ocr = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                img_np = np.array(image_ocr)
+            else:
+                img_np = np.array(image)
         except Exception as e:
             raise ValueError(f"Invalid or corrupted image file: {str(e)}")
 
-        return self._run_ocr_on_numpy_image(img_np, page_num=1)
+        res = self._run_ocr_on_numpy_image(img_np, page_num=1)
+
+        # Rescale bounding boxes back to original image coordinate space if scaled
+        if scale != 1.0 and scale > 0:
+            inv_scale = 1.0 / scale
+            for region in res.get("regions", []):
+                b = region.get("bbox", [0, 0, 0, 0])
+                region["bbox"] = [
+                    round(b[0] * inv_scale, 2),
+                    round(b[1] * inv_scale, 2),
+                    round(b[2] * inv_scale, 2),
+                    round(b[3] * inv_scale, 2),
+                ]
+
+        return res
 
     def _process_pdf(self, file_bytes: bytes) -> Dict[str, Any]:
         """Process multi-page PDF documents page by page using PyMuPDF."""
