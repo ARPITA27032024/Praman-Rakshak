@@ -121,7 +121,7 @@ async def process_document_pipeline(file: UploadFile = File(...)):
         logger.error("[PROCESS] Unexpected pipeline error: %s", str(err), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Document processing is temporarily unavailable. Please try again."
+            detail=f"Document processing error: {str(err)}"
         )
     finally:
         import gc
