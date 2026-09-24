@@ -55,6 +55,8 @@ class OCRService:
             try:
                 self._pipeline = create_pipeline(
                     pipeline="OCR",
+                    text_det_model="PP-OCRv4_mobile_det",
+                    text_rec_model="PP-OCRv4_mobile_rec",
                     use_doc_orientation_classify=False,
                     use_doc_unwarping=False,
                     use_textline_orientation=False,
