@@ -13,9 +13,10 @@ _orig_create_predictor = paddle_inference.create_predictor
 
 def _patched_create_predictor(config):
     if hasattr(config, "disable_mkldnn"):
-        config.disable_mkldnn()
-    if hasattr(config, "enable_new_ir"):
-        config.enable_new_ir(False)
+        try:
+            config.disable_mkldnn()
+        except Exception:
+            pass
     return _orig_create_predictor(config)
 
 
