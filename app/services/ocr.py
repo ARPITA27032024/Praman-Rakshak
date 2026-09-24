@@ -78,6 +78,11 @@ class OCRService:
                 f"Supported formats: {', '.join(sorted(self.SUPPORTED_EXTENSIONS))}"
             )
 
+        # Cloud container memory safety check (Render 512MB RAM ceiling)
+        if os.getenv("RENDER") or os.getenv("IS_RENDER"):
+            logger.info("[OCR] Render cloud environment detected; using fast memory-safe extraction.")
+            return self._process_fallback(file_bytes, filename)
+
         try:
             pipeline = self._get_pipeline()
             if pipeline is None:
