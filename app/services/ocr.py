@@ -1,3 +1,11 @@
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["FLAGS_use_mkldnn"] = "0"
+
 import io
 import gc
 from typing import Dict, List, Any, Optional
@@ -7,7 +15,7 @@ import pymupdf
 import paddle.inference as paddle_inference
 from paddlex import create_pipeline
 
-# Fix for Paddle 3.3+ static CPU executor issue on Windows with oneDNN PIR instructions
+# Fix for Paddle 3.3+ static CPU executor issue on Windows/Linux with oneDNN PIR instructions & multi-thread RAM spikes
 _orig_create_predictor = paddle_inference.create_predictor
 
 
@@ -15,6 +23,11 @@ def _patched_create_predictor(config):
     if hasattr(config, "disable_mkldnn"):
         try:
             config.disable_mkldnn()
+        except Exception:
+            pass
+    if hasattr(config, "set_cpu_math_library_num_threads"):
+        try:
+            config.set_cpu_math_library_num_threads(1)
         except Exception:
             pass
     return _orig_create_predictor(config)
