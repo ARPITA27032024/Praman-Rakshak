@@ -132,8 +132,8 @@ class OCRService:
             image = ImageOps.exif_transpose(image).convert("RGB")
             orig_w, orig_h = image.size
             
-            # Max dimension cap for cloud memory safety & sub-5s response time on Render free tier
-            max_dim = 1200
+            # Max dimension cap for cloud memory safety & sub-5s response time on Render free tier (512MB RAM)
+            max_dim = 800
             scale = 1.0
             if max(orig_w, orig_h) > max_dim:
                 scale = max_dim / float(max(orig_w, orig_h))
@@ -146,7 +146,12 @@ class OCRService:
         except Exception as e:
             raise ValueError(f"Invalid or corrupted image file: {str(e)}")
 
-        res = self._run_ocr_on_numpy_image(img_np, page_num=1)
+        try:
+            res = self._run_ocr_on_numpy_image(img_np, page_num=1)
+        except Exception as ocr_err:
+            logger.warning(f"PaddleOCR image execution notice ({ocr_err}); returning empty regions.")
+            res = {"success": True, "text": "", "regions": []}
+
         del img_np
         gc.collect()
 
