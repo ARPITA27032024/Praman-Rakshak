@@ -11,6 +11,7 @@ from app.api.evaluation import router as evaluation_router
 from app.api.kie import router as kie_router
 from app.api.pii import router as pii_router
 from app.api.redaction import router as redaction_router
+from app.api.process import router as process_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -35,6 +36,7 @@ app.include_router(evaluation_router)
 app.include_router(kie_router)
 app.include_router(pii_router)
 app.include_router(redaction_router)
+app.include_router(process_router)
 
 
 @app.get("/", response_class=FileResponse)

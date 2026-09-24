@@ -1,4 +1,4 @@
-// PRAMAAN RAKSHAK - Frontend Dashboard Controller
+// PRAMAAN RAKSHAK - Production Dashboard Controller
 
 document.addEventListener('DOMContentLoaded', () => {
   // DOM Elements
@@ -26,14 +26,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // PII & Redaction Elements
   const piiTableBody = document.getElementById('piiTableBody');
-  const piiEmptyRow = document.getElementById('piiEmptyRow');
   const redactionCountVal = document.getElementById('redactionCountVal');
   const redactionTypesVal = document.getElementById('redactionTypesVal');
   const previewContainer = document.getElementById('previewContainer');
-  const previewPlaceholder = document.getElementById('previewPlaceholder');
   const downloadBtn = document.getElementById('downloadBtn');
 
-  // Pipeline Step Items in execution order
+  // Pipeline Step Items
   const stepKeys = ['upload', 'ocr', 'classify', 'kie', 'pii', 'redact'];
   const steps = {
     upload: document.getElementById('step-upload'),
@@ -47,32 +45,26 @@ document.addEventListener('DOMContentLoaded', () => {
   let selectedFile = null;
   let isProcessing = false;
 
-  // Global uncaught JS error logger for debug
+  // Uncaught JS error logger
   window.addEventListener('error', (evt) => {
     console.error('[DEBUG] Uncaught JS Error:', evt.message, 'at', evt.filename, ':', evt.lineno);
   });
 
-  // 1. Health Status Check
+  // 1. Informational Health Check (Never blocks document processing)
   async function checkHealth() {
-    console.log('[DEBUG] Requesting health status from URL: /health');
+    console.log('[DEBUG] Health check ping: /health');
     try {
       const res = await fetch('/health', { cache: 'no-cache' });
-      console.log('[DEBUG] Health HTTP status:', res.status, 'ok:', res.ok);
-
       if (res.ok || res.status === 200) {
-        const data = await res.json().catch(() => ({}));
-        console.log('[DEBUG] Health response body:', data);
         statusBadge.className = 'status-badge online';
         statusText.textContent = 'System Online';
         offlineBanner.style.display = 'none';
         return true;
       }
-
-      console.warn('[DEBUG] Health status check returned non-200 status:', res.status);
       setOfflineState();
       return false;
     } catch (e) {
-      console.error('[DEBUG] Health status check fetch exception:', e);
+      console.warn('[DEBUG] Health ping exception:', e);
       setOfflineState();
       return false;
     }
@@ -86,9 +78,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Initial health check & periodic polling
   checkHealth();
-  setInterval(checkHealth, 15000);
+  setInterval(checkHealth, 20000);
 
-  // 2. Drag & Drop and File Input
+  // 2. Drag & Drop & File Selection
   dropzone.addEventListener('click', () => {
     if (!isProcessing) fileInput.click();
   });
@@ -124,7 +116,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   function handleFileSelected(file) {
-    console.log('[DEBUG] File selected:', file.name, 'size:', file.size, 'type:', file.type);
+    console.log('[DEBUG] File selected:', file.name, 'size:', file.size);
     const validExtensions = ['.png', '.jpg', '.jpeg', '.pdf'];
     const ext = '.' + file.name.split('.').pop().toLowerCase();
     
@@ -154,9 +146,9 @@ document.addEventListener('DOMContentLoaded', () => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 
-  // 3. Process Document Pipeline
+  // 3. Process Document Pipeline (Calls unified relative endpoint POST /process)
   processBtn.addEventListener('click', async () => {
-    console.log('[DEBUG] Process Document button clicked. Selected file:', selectedFile ? selectedFile.name : 'NONE');
+    console.log('[DEBUG] Process Document clicked. Selected file:', selectedFile ? selectedFile.name : 'NONE');
     if (!selectedFile || isProcessing) return;
 
     isProcessing = true;
@@ -165,127 +157,50 @@ document.addEventListener('DOMContentLoaded', () => {
     hideError();
     resetResultsUI();
 
+    // Mark upload step active
+    updateStepStatus('upload', 'completed');
+    updateStepStatus('ocr', 'processing');
+    updateStepStatus('classify', 'processing');
+    updateStepStatus('kie', 'processing');
+    updateStepStatus('pii', 'processing');
+    updateStepStatus('redact', 'processing');
+
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+
     try {
-      // Step 1: Uploaded
-      console.log('[DEBUG] Step 1: Upload stage marked completed.');
-      updateStepStatus('upload', 'completed');
-
-      // Step 2: OCR
-      console.log('[DEBUG] Step 2: Sending POST /ocr request...');
-      updateStepStatus('ocr', 'processing');
-      const formDataOcr = new FormData();
-      formDataOcr.append('file', selectedFile);
-
-      const ocrRes = await fetch('/ocr', { method: 'POST', body: formDataOcr });
-      console.log('[DEBUG] OCR HTTP status:', ocrRes.status, 'ok:', ocrRes.ok);
-
-      if (!ocrRes.ok) {
-        const errData = await ocrRes.json().catch(() => ({ detail: 'OCR processing failed.' }));
-        console.error('[DEBUG] OCR processing error body:', errData);
-        throw { step: 'ocr', message: errData.detail || 'OCR processing failed.' };
-      }
-      const ocrData = await ocrRes.json();
-      console.log('[DEBUG] OCR response body received. Text length:', (ocrData.text || '').length, 'Regions:', (ocrData.regions || []).length);
-      updateStepStatus('ocr', 'completed');
-
-      // Step 3: Classification
-      console.log('[DEBUG] Step 3: Sending POST /classify request...');
-      updateStepStatus('classify', 'processing');
-      const ocrText = ocrData.text || '';
-      const classifyRes = await fetch('/classify', {
+      console.log('[DEBUG] Sending POST /process request...');
+      const res = await fetch('/process', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: ocrText })
+        body: formData
       });
-      console.log('[DEBUG] Classify HTTP status:', classifyRes.status);
-      
-      if (!classifyRes.ok) {
-        const errData = await classifyRes.json().catch(() => ({ detail: 'Classification failed.' }));
-        console.error('[DEBUG] Classify error body:', errData);
-        throw { step: 'classify', message: errData.detail || 'Classification failed.' };
+
+      console.log('[DEBUG] /process HTTP status:', res.status);
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        console.error('[DEBUG] /process error response:', errData);
+        const detailMsg = errData.detail || 'Document processing is temporarily unavailable. Please try again.';
+        throw new Error(detailMsg);
       }
-      const classifyData = await classifyRes.json();
-      console.log('[DEBUG] Classify response body:', classifyData);
-      docTypeVal.textContent = classifyData.document_type || 'Unknown';
-      const confPct = (classifyData.confidence * 100).toFixed(1) + '%';
-      docConfVal.innerHTML = `<span>${confPct}</span>`;
-      updateStepStatus('classify', 'completed');
 
-      // Step 4: KIE
-      console.log('[DEBUG] Step 4: Sending POST /extract/fir request...');
-      updateStepStatus('kie', 'processing');
-      const formDataKie = new FormData();
-      formDataKie.append('file', selectedFile);
+      const data = await res.json();
+      console.log('[DEBUG] /process response received:', data);
 
-      const kieRes = await fetch('/extract/fir', { method: 'POST', body: formDataKie });
-      console.log('[DEBUG] KIE HTTP status:', kieRes.status);
-      if (!kieRes.ok) {
-        const errData = await kieRes.json().catch(() => ({ detail: 'KIE processing failed.' }));
-        console.error('[DEBUG] KIE error body:', errData);
-        throw { step: 'kie', message: errData.detail || 'KIE processing failed.' };
-      }
-      const kieData = await kieRes.json();
-      console.log('[DEBUG] KIE response body:', kieData);
-      const fields = kieData.extracted_fields || {};
-      psVal.textContent = (fields.police_station && fields.police_station.value) ? fields.police_station.value : '-';
-      yearVal.textContent = (fields.year && fields.year.value) ? fields.year.value : '-';
-      statutesVal.textContent = (fields.statutes && fields.statutes.value) ? fields.statutes.value : '-';
-      complainantVal.textContent = (fields.complainant_name && fields.complainant_name.value) ? fields.complainant_name.value : '-';
-      updateStepStatus('kie', 'completed');
+      // Mark all pipeline steps completed
+      stepKeys.forEach(k => updateStepStatus(k, 'completed'));
 
-      // Step 5: PII Detection
-      console.log('[DEBUG] Step 5: Sending POST /detect/pii request...');
-      updateStepStatus('pii', 'processing');
-      const formDataPii = new FormData();
-      formDataPii.append('file', selectedFile);
-
-      const piiRes = await fetch('/detect/pii', { method: 'POST', body: formDataPii });
-      console.log('[DEBUG] PII HTTP status:', piiRes.status);
-      if (!piiRes.ok) {
-        const errData = await piiRes.json().catch(() => ({ detail: 'PII detection failed.' }));
-        console.error('[DEBUG] PII error body:', errData);
-        throw { step: 'pii', message: errData.detail || 'PII detection failed.' };
-      }
-      const piiData = await piiRes.json();
-      console.log('[DEBUG] PII response body:', piiData);
-      const piiEntities = piiData.pii_entities || [];
-      renderPIITable(piiEntities);
-      updateStepStatus('pii', 'completed');
-
-      // Step 6: Redaction
-      console.log('[DEBUG] Step 6: Sending POST /redact/pii request...');
-      updateStepStatus('redact', 'processing');
-      const formDataRedact = new FormData();
-      formDataRedact.append('file', selectedFile);
-
-      const redactRes = await fetch('/redact/pii', { method: 'POST', body: formDataRedact });
-      console.log('[DEBUG] Redact HTTP status:', redactRes.status);
-      if (!redactRes.ok) {
-        const errData = await redactRes.json().catch(() => ({ detail: 'Redaction failed.' }));
-        console.error('[DEBUG] Redact error body:', errData);
-        throw { step: 'redact', message: errData.detail || 'Redaction failed.' };
-      }
-      const redactData = await redactRes.json();
-      console.log('[DEBUG] Redact response body:', redactData);
-      updateStepStatus('redact', 'completed');
-
-      renderRedactionResults(redactData);
+      // Render Dashboard Information Cards
+      renderPipelineResults(data);
 
     } catch (err) {
-      console.error('[DEBUG] Pipeline exception encountered:', err);
-      const failedStep = err.step || 'process';
-      const msg = err.message || 'An unexpected error occurred during processing.';
-      
-      let foundFailed = false;
+      console.error('[DEBUG] Pipeline exception:', err);
       stepKeys.forEach(k => {
-        if (k === failedStep) {
-          updateStepStatus(k, 'failed');
-          foundFailed = true;
-        } else if (foundFailed) {
+        if (steps[k] && steps[k].classList.contains('processing')) {
           updateStepStatus(k, 'failed');
         }
       });
-      showError(`Document processing failed at ${failedStep.toUpperCase()} stage: ${msg}`);
+      showError(err.message || 'Document processing is temporarily unavailable. Please try again.');
     } finally {
       isProcessing = false;
       processBtn.disabled = false;
@@ -293,7 +208,84 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // 4. Update Pipeline Step UI
+  // 4. Render Pipeline Results
+  function renderPipelineResults(data) {
+    // Document Type & Confidence
+    docTypeVal.textContent = data.document_type || 'Unknown';
+    const confPct = ((data.confidence || 0) * 100).toFixed(1) + '%';
+    docConfVal.innerHTML = `<span>${confPct}</span>`;
+
+    // Key Extracted Fields (KIE)
+    const fields = data.extracted_fields || {};
+    psVal.textContent = (fields.police_station && fields.police_station.value) ? fields.police_station.value : '-';
+    yearVal.textContent = (fields.year && fields.year.value) ? fields.year.value : '-';
+    statutesVal.textContent = (fields.statutes && fields.statutes.value) ? fields.statutes.value : '-';
+    complainantVal.textContent = (fields.complainant_name && fields.complainant_name.value) ? fields.complainant_name.value : '-';
+
+    // PII Detection Table (Sensitive text is masked for security)
+    renderPIITable(data.pii_entities || []);
+
+    // Redaction Results & Preview / Download
+    renderRedactionSection(data);
+  }
+
+  function renderPIITable(entities) {
+    piiTableBody.innerHTML = '';
+    
+    if (!entities || entities.length === 0) {
+      piiTableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No PII entities detected</td></tr>';
+      return;
+    }
+
+    entities.forEach(ent => {
+      const row = document.createElement('tr');
+      const confPct = ((ent.confidence || 0) * 100).toFixed(2) + '%';
+      
+      row.innerHTML = `
+        <td><span class="entity-tag">${ent.type}</span></td>
+        <td>${confPct}</td>
+        <td>Page ${ent.page || 1}</td>
+        <td><span class="status-text-masked">Detected</span></td>
+      `;
+      piiTableBody.appendChild(row);
+    });
+  }
+
+  function renderRedactionSection(data) {
+    redactionCountVal.textContent = data.redaction_count || 0;
+
+    const typesSet = new Set((data.redactions || []).map(r => r.type));
+    const typesArray = Array.from(typesSet);
+    
+    if (typesArray.length > 0) {
+      redactionTypesVal.innerHTML = typesArray.map(t => `<span class="entity-tag">${t}</span>`).join(' ');
+    } else {
+      redactionTypesVal.textContent = '-';
+    }
+
+    if (data.redacted_file_url) {
+      downloadBtn.href = data.redacted_file_url;
+      downloadBtn.style.display = 'inline-flex';
+
+      previewContainer.innerHTML = '';
+      const fileUrl = data.redacted_file_url;
+      
+      if (data.redacted_filename && data.redacted_filename.endsWith('.pdf')) {
+        const iframe = document.createElement('iframe');
+        iframe.src = fileUrl;
+        iframe.className = 'preview-iframe';
+        previewContainer.appendChild(iframe);
+      } else {
+        const img = document.createElement('img');
+        img.src = fileUrl;
+        img.alt = 'Redacted Document Preview';
+        img.className = 'preview-image';
+        previewContainer.appendChild(img);
+      }
+    }
+  }
+
+  // 5. Update Pipeline Step Status
   function updateStepStatus(stepKey, status) {
     const el = steps[stepKey];
     if (!el) return;
@@ -316,65 +308,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // 5. Render PII Table (Sensitive Text is NEVER displayed for security)
-  function renderPIITable(entities) {
-    piiTableBody.innerHTML = '';
-    
-    if (!entities || entities.length === 0) {
-      piiTableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No PII entities detected</td></tr>';
-      return;
-    }
-
-    entities.forEach(ent => {
-      const row = document.createElement('tr');
-      const confPct = (ent.confidence * 100).toFixed(2) + '%';
-      
-      row.innerHTML = `
-        <td><span class="entity-tag">${ent.type}</span></td>
-        <td>${confPct}</td>
-        <td>Page ${ent.page || 1}</td>
-        <td><span class="status-text-masked">Detected</span></td>
-      `;
-      piiTableBody.appendChild(row);
-    });
-  }
-
-  // 6. Render Redaction Results & Download / Preview
-  function renderRedactionResults(redactData) {
-    redactionCountVal.textContent = redactData.redaction_count || 0;
-
-    const typesSet = new Set((redactData.redactions || []).map(r => r.type));
-    const typesArray = Array.from(typesSet);
-    
-    if (typesArray.length > 0) {
-      redactionTypesVal.innerHTML = typesArray.map(t => `<span class="entity-tag">${t}</span>`).join(' ');
-    } else {
-      redactionTypesVal.textContent = '-';
-    }
-
-    if (redactData.redacted_file_url) {
-      downloadBtn.href = redactData.redacted_file_url;
-      downloadBtn.style.display = 'inline-flex';
-
-      previewContainer.innerHTML = '';
-      const fileUrl = redactData.redacted_file_url;
-      
-      if (redactData.redacted_filename.endsWith('.pdf')) {
-        const iframe = document.createElement('iframe');
-        iframe.src = fileUrl;
-        iframe.className = 'preview-iframe';
-        previewContainer.appendChild(iframe);
-      } else {
-        const img = document.createElement('img');
-        img.src = fileUrl;
-        img.alt = 'Redacted Document Preview';
-        img.className = 'preview-image';
-        previewContainer.appendChild(img);
-      }
-    }
-  }
-
-  // 7. Reset UI for New Document
+  // 6. Reset UI Controller
   resetBtn.addEventListener('click', resetAll);
 
   function resetAll() {
