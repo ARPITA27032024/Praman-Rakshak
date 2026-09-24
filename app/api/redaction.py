@@ -99,17 +99,25 @@ async def redact_pii_document(
         )
 
 
-@router.get("/download/redacted/{filename}", response_class=FileResponse, tags=["PII Redaction"])
+@router.get("/download/redacted/{filename}", tags=["PII Redaction"])
 async def download_redacted_file(filename: str):
     """
     Download a previously created redacted document file from storage/redacted/.
     """
-    file_path = Path(settings.REDACTED_DIR) / filename
+    file_path = Path(settings.REDACTED_DIR).resolve() / filename
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Redacted file '{filename}' not found."
         )
 
-    media_type = "application/pdf" if filename.endswith(".pdf") else "image/png"
+    if filename.endswith(".pdf"):
+        media_type = "application/pdf"
+    elif filename.endswith((".jpg", ".jpeg")):
+        media_type = "image/jpeg"
+    elif filename.endswith(".png"):
+        media_type = "image/png"
+    else:
+        media_type = "application/octet-stream"
+
     return FileResponse(path=str(file_path), media_type=media_type, filename=filename)

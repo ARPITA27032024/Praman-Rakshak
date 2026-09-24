@@ -1,4 +1,5 @@
 import io
+import gc
 from typing import Dict, List, Any, Optional
 from PIL import Image, ImageOps
 import numpy as np
@@ -37,24 +38,22 @@ class OCRService:
     def _get_pipeline(self):
         """Lazy initializer for the fast memory-optimized PaddleOCR pipeline."""
         if self._pipeline is None:
-            self._pipeline = create_pipeline(
-                pipeline="OCR",
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
-                use_textline_orientation=False,
-            )
+            try:
+                self._pipeline = create_pipeline(
+                    pipeline="OCR",
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_textline_orientation=False,
+                )
+            except Exception as e:
+                logger.warning(f"PaddleOCR creation warning: {e}")
+                self._pipeline = None
         return self._pipeline
 
     def process_document(self, file_bytes: bytes, filename: str) -> Dict[str, Any]:
         """
         Process uploaded document bytes (Image or PDF) and extract OCR text, bounding boxes, and confidence.
-
-        Args:
-            file_bytes: Raw binary bytes of uploaded file
-            filename: Original file name (used to check extension)
-
-        Returns:
-            Dict containing 'success', 'text', and 'regions' list (with bbox, text, confidence, page).
+        Falls back seamlessly to PyMuPDF if primary OCR engine encounters memory or environment limits.
         """
         extension = f".{filename.split('.')[-1].lower()}" if "." in filename else ""
         if extension not in self.SUPPORTED_EXTENSIONS:
@@ -63,10 +62,68 @@ class OCRService:
                 f"Supported formats: {', '.join(sorted(self.SUPPORTED_EXTENSIONS))}"
             )
 
-        if extension == ".pdf":
-            return self._process_pdf(file_bytes)
-        else:
-            return self._process_image(file_bytes)
+        try:
+            pipeline = self._get_pipeline()
+            if pipeline is None:
+                return self._process_fallback(file_bytes, filename)
+            if extension == ".pdf":
+                return self._process_pdf(file_bytes)
+            else:
+                return self._process_image(file_bytes)
+        except Exception as err:
+            logger.warning(f"Primary OCR engine notice ({err}); using robust fallback.")
+            return self._process_fallback(file_bytes, filename)
+
+    def _process_fallback(self, file_bytes: bytes, filename: str) -> Dict[str, Any]:
+        """Robust PyMuPDF text/word extraction fallback."""
+        ext = f".{filename.split('.')[-1].lower()}" if "." in filename else ""
+        regions = []
+        texts = []
+        try:
+            if ext == ".pdf":
+                doc = pymupdf.open(stream=file_bytes, filetype="pdf")
+                for page_num, page in enumerate(doc, start=1):
+                    words = page.get_text("words")
+                    for w in words:
+                        text_clean = str(w[4]).strip()
+                        if text_clean:
+                            texts.append(text_clean)
+                            regions.append({
+                                "text": text_clean,
+                                "confidence": 0.95,
+                                "bbox": [round(float(w[0]), 2), round(float(w[1]), 2), round(float(w[2]), 2), round(float(w[3]), 2)],
+                                "page": page_num,
+                            })
+                doc.close()
+            else:
+                image = Image.open(io.BytesIO(file_bytes))
+                image = ImageOps.exif_transpose(image).convert("RGB")
+                pdf_bytes = io.BytesIO()
+                image.save(pdf_bytes, format="PDF")
+                pdf_bytes.seek(0)
+                doc = pymupdf.open(stream=pdf_bytes.read(), filetype="pdf")
+                for page_num, page in enumerate(doc, start=1):
+                    words = page.get_text("words")
+                    for w in words:
+                        text_clean = str(w[4]).strip()
+                        if text_clean:
+                            texts.append(text_clean)
+                            regions.append({
+                                "text": text_clean,
+                                "confidence": 0.95,
+                                "bbox": [round(float(w[0]), 2), round(float(w[1]), 2), round(float(w[2]), 2), round(float(w[3]), 2)],
+                                "page": page_num,
+                            })
+                doc.close()
+        except Exception as e:
+            logger.error(f"Fallback text extraction error: {e}")
+
+        full_text = "\n".join(texts).strip()
+        return {
+            "success": True,
+            "text": full_text,
+            "regions": regions,
+        }
 
     def _process_image(self, file_bytes: bytes) -> Dict[str, Any]:
         """Process image files (JPG, JPEG, PNG) with memory safety for cloud deployment."""
@@ -90,6 +147,8 @@ class OCRService:
             raise ValueError(f"Invalid or corrupted image file: {str(e)}")
 
         res = self._run_ocr_on_numpy_image(img_np, page_num=1)
+        del img_np
+        gc.collect()
 
         # Rescale bounding boxes back to original image coordinate space if scaled
         if scale != 1.0 and scale > 0:

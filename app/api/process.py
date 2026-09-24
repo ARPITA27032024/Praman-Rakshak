@@ -123,3 +123,6 @@ async def process_document_pipeline(file: UploadFile = File(...)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Document processing is temporarily unavailable. Please try again."
         )
+    finally:
+        import gc
+        gc.collect()

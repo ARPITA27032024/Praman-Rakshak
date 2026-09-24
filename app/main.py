@@ -16,21 +16,10 @@ from app.api.redaction import router as redaction_router
 from app.api.process import router as process_router
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Pre-warm ML models during server startup for instant sub-3s HTTP response times."""
-    try:
-        ocr_service._get_pipeline()
-    except Exception as err:
-        print(f"Model pre-warm warning: {err}")
-    yield
-
-
 app = FastAPI(
     title=settings.APP_NAME,
     description="Digital Evidence & Document Management System Backend API",
     version="0.1.0",
-    lifespan=lifespan,
 )
 
 # Ensure required storage directories exist
