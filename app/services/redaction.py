@@ -67,14 +67,18 @@ class RedactionService:
         stem = Path(filename).stem
         ext = Path(filename).suffix.lower()
 
-        if ext == ".pdf":
+        if ext in [".jpg", ".jpeg"]:
+            output_filename = f"redacted_{stem}.jpg"
+            output_filepath = str(Path(settings.REDACTED_DIR) / output_filename)
+            self._redact_image(file_bytes, valid_entities, output_filepath, padding, fmt="JPEG")
+        elif ext == ".pdf":
             output_filename = f"redacted_{stem}.pdf"
             output_filepath = str(Path(settings.REDACTED_DIR) / output_filename)
             self._redact_pdf(file_bytes, valid_entities, output_filepath, padding)
         else:
             output_filename = f"redacted_{stem}.png"
             output_filepath = str(Path(settings.REDACTED_DIR) / output_filename)
-            self._redact_image(file_bytes, valid_entities, output_filepath, padding)
+            self._redact_image(file_bytes, valid_entities, output_filepath, padding, fmt="PNG")
 
         debug_overlay_path = None
         if generate_debug_overlay and ocr_regions:
@@ -182,7 +186,7 @@ class RedactionService:
         return valid_entities, redaction_metadata
 
     def _redact_image(
-        self, file_bytes: bytes, entities: List[Dict[str, Any]], output_filepath: str, padding: int
+        self, file_bytes: bytes, entities: List[Dict[str, Any]], output_filepath: str, padding: int, fmt: str = "PNG"
     ):
         """Process image document and draw black rectangles over PII bounding boxes."""
         try:
@@ -200,8 +204,10 @@ class RedactionService:
             # Draw opaque black rectangle
             draw.rectangle([px1, py1, px2, py2], fill=(0, 0, 0))
 
-        # Save as PNG to avoid JPEG compression artifacts around black redaction rectangles
-        image.save(output_filepath, format="PNG")
+        if fmt.upper() in ["JPG", "JPEG"]:
+            image.save(output_filepath, format="JPEG", quality=95)
+        else:
+            image.save(output_filepath, format="PNG")
 
     def _redact_pdf(
         self, file_bytes: bytes, entities: List[Dict[str, Any]], output_filepath: str, padding: int

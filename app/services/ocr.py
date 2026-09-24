@@ -35,9 +35,14 @@ class OCRService:
         self._pipeline = None
 
     def _get_pipeline(self):
-        """Lazy initializer for the PaddleOCR pipeline."""
+        """Lazy initializer for the fast memory-optimized PaddleOCR pipeline."""
         if self._pipeline is None:
-            self._pipeline = create_pipeline(pipeline="OCR")
+            self._pipeline = create_pipeline(
+                pipeline="OCR",
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=False,
+            )
         return self._pipeline
 
     def process_document(self, file_bytes: bytes, filename: str) -> Dict[str, Any]:
@@ -70,8 +75,8 @@ class OCRService:
             image = ImageOps.exif_transpose(image).convert("RGB")
             orig_w, orig_h = image.size
             
-            # Max dimension cap for cloud memory safety (prevents 502 OOM crashes on Render 512MB RAM)
-            max_dim = 1600
+            # Max dimension cap for cloud memory safety & sub-5s response time on Render free tier
+            max_dim = 1200
             scale = 1.0
             if max(orig_w, orig_h) > max_dim:
                 scale = max_dim / float(max(orig_w, orig_h))
