@@ -8,37 +8,18 @@ os.environ["FLAGS_use_mkldnn"] = "0"
 
 import io
 import gc
+import logging
 from typing import Dict, List, Any, Optional
 from PIL import Image, ImageOps
 import numpy as np
 import pymupdf
-import paddle.inference as paddle_inference
-from paddlex import create_pipeline
 
-# Fix for Paddle 3.3+ static CPU executor issue on Windows/Linux with oneDNN PIR instructions & multi-thread RAM spikes
-_orig_create_predictor = paddle_inference.create_predictor
-
-
-def _patched_create_predictor(config):
-    if hasattr(config, "disable_mkldnn"):
-        try:
-            config.disable_mkldnn()
-        except Exception:
-            pass
-    if hasattr(config, "set_cpu_math_library_num_threads"):
-        try:
-            config.set_cpu_math_library_num_threads(1)
-        except Exception:
-            pass
-    return _orig_create_predictor(config)
-
-
-paddle_inference.create_predictor = _patched_create_predictor
+logger = logging.getLogger(__name__)
 
 
 class OCRService:
     """
-    OCR Service powered by pretrained PaddleOCR pipeline.
+    OCR Service powered by pretrained PaddleOCR pipeline with lazy module loading.
     Extracts text regions, confidence scores, and bounding boxes [x1, y1, x2, y2]
     from scanned document images and PDFs.
     """
@@ -53,6 +34,28 @@ class OCRService:
         """Lazy initializer for the fast memory-optimized PaddleOCR pipeline."""
         if self._pipeline is None:
             try:
+                import paddle.inference as paddle_inference
+                from paddlex import create_pipeline
+
+                if not hasattr(paddle_inference, "_patched_for_render"):
+                    orig_create_predictor = paddle_inference.create_predictor
+
+                    def patched_create_predictor(config):
+                        if hasattr(config, "disable_mkldnn"):
+                            try:
+                                config.disable_mkldnn()
+                            except Exception:
+                                pass
+                        if hasattr(config, "set_cpu_math_library_num_threads"):
+                            try:
+                                config.set_cpu_math_library_num_threads(1)
+                            except Exception:
+                                pass
+                        return orig_create_predictor(config)
+
+                    paddle_inference.create_predictor = patched_create_predictor
+                    paddle_inference._patched_for_render = True
+
                 self._pipeline = create_pipeline(
                     pipeline="OCR",
                     text_det_model="PP-OCRv4_mobile_det",
